@@ -4,6 +4,10 @@ Godot 4.7.2 일반판 · GDScript · Android 세로 화면 · 2D 정지 캐릭�
 
 ## 실행
 
+- 웹: https://junqe-collab.github.io/taptop/ (최초 GitHub Actions 배포 성공 후 사용 가능).
+- `main`에 push하면 GitHub Actions가 Godot 4.7.2로 규칙 검사와 웹 빌드를 실행하고 GitHub Pages에 배포한다. Actions의 `Build and deploy web game`에서 수동 재실행도 가능하다.
+- 웹 배포는 단일 스레드를 사용하며 개발용 MCP 애드온을 제외한다. 배포 설정은 `.github/workflows/pages.yml`, 웹 프리셋은 `export_presets.cfg`에 있다.
+
 - Windows: [taptop-three-floors.exe](exports/taptop-three-floors.exe)를 실행한다.
 - Godot: 이 폴더의 project.godot를 열고 F5로 실행한다.
 - Android: [taptop-three-floors.apk](exports/taptop-three-floors.apk)를 휴대폰에 복사해 설치한다. 개인 테스트용 디버그 서명 APK다.

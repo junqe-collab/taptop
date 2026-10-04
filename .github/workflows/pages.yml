@@ -1,0 +1,73 @@
+name: Build and deploy web game
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Godot and export templates
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip" -o /tmp/godot.zip
+          unzip -q /tmp/godot.zip -d /tmp/godot
+          chmod +x /tmp/godot/Godot_*
+          echo /tmp/godot >> "$GITHUB_PATH"
+          curl -fL --retry 3 "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz" -o /tmp/templates.zip
+          mkdir -p "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+          unzip -q -j /tmp/templates.zip 'templates/web*' 'templates/version.txt' -d "$HOME/.local/share/godot/export_templates/${GODOT_VERSION}.stable"
+      - name: Remove development plugins from build copy
+        shell: python
+        run: |
+          from pathlib import Path
+          import re
+          project = Path('project.godot')
+          text = project.read_text()
+          for section in ('autoload', 'editor_plugins'):
+              text = re.sub(r'(?ms)^\[' + section + r'\]\n.*?(?=^\[|\Z)', '', text)
+          project.write_text(text)
+      - name: Import, test, and export
+        shell: bash
+        run: |
+          set -euo pipefail
+          godot="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          "$godot" --headless --path . --editor --import
+          "$godot" --headless --path . --script res://tests/check_battle.gd
+          mkdir -p exports/web
+          "$godot" --headless --path . --export-release Web exports/web/index.html
+          test -s exports/web/index.html
+          test -s exports/web/index.wasm
+          test -s exports/web/index.pck
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: exports/web
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v5
+      - uses: actions/deploy-pages@v4
+        id: deployment
