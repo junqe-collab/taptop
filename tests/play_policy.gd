@@ -37,13 +37,13 @@ static func gear_choice(game, offers: Array) -> Dictionary:
 static func card(game) -> Dictionary:
 	var chosen = {}
 	var best = 0.0
-	var enemy = game.living(game.enemies)[0]
+	var enemy = game.attack_target()
 	for entry in game.hand:
 		var hero = game.find_unit(entry.caster)
 		var skill = game.SKILLS[entry.skill]
-		if hero.hp <= 0 or hero.mp < skill.cost: continue
+		if hero.hp <= 0 or hero.mp < game.skill_cost(entry.skill): continue
 		var basic = mini(enemy.hp, maxi(1, hero.patk - enemy.pdef))
-		var value = -float(basic) - skill.cost * 0.3
+		var value = -float(basic) - game.skill_cost(entry.skill) * 0.3
 		match skill.kind:
 			"heal", "party_heal":
 				var targets = game.living(game.party) if skill.kind == "party_heal" else [game.weakest(game.party)]

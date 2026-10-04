@@ -31,31 +31,42 @@ func click(node_name: String) -> void:
 		expect(false, "Missing button " + node_name)
 		return
 	expect(not button.disabled, "Enabled button " + node_name)
-	app.scroll.ensure_control_visible(button)
+	var management_scroll = app.find_child("ManagementScroll", true, false)
+	if app.manage_sheet.visible and management_scroll.is_ancestor_of(button):
+		management_scroll.ensure_control_visible(button)
 	if node_name.begins_with("Skill_"):
 		app.find_child("HandTray", true, false).ensure_control_visible(button)
 	await settle()
 	var center = button.get_global_rect().get_center()
+	var motion = InputEventMouseMotion.new()
+	motion.position = center
+	button.get_viewport().push_input(motion, true)
 	for pressed in [true, false]:
 		if touch_mode:
 			var event = InputEventScreenTouch.new()
 			event.position = root.get_final_transform() * center
+			if button.get_viewport() != root: event.position = center
 			event.pressed = pressed
-			Input.parse_input_event(event)
+			if button.get_viewport() == root: Input.parse_input_event(event)
+			else: button.get_viewport().push_input(event, true)
 		else:
 			var event = InputEventMouseButton.new()
 			event.button_index = MOUSE_BUTTON_LEFT
 			event.position = center
 			event.global_position = center
 			event.pressed = pressed
+			if button.get_viewport() != root:
+				event.position += Vector2(button.get_viewport().position)
+				event.global_position = event.position
 			root.push_input(event, true)
 		await process_frame
 	await settle()
 
-func capture(label: String, from_top = true) -> void:
-	if from_top: app.scroll.scroll_vertical = 0
+func capture(label: String, _from_top = true) -> void:
+
 	await settle()
 	expect(app.page.size.x <= root.get_visible_rect().size.x, "No horizontal overflow at " + label)
+	expect(app.page.get_global_rect().end.y <= root.get_visible_rect().size.y + 1, "Entire page fits without scrolling at " + label)
 	if app.game.phase == "combat":
 		var action = app.find_child("ResolveRound", true, false)
 		if action != null:
@@ -124,11 +135,17 @@ func fight_ui() -> void:
 func _run() -> void:
 	captures = OS.get_cmdline_user_args().has("--capture")
 	touch_mode = OS.get_cmdline_user_args().has("--touch")
-	output_dir = ProjectSettings.globalize_path("res://.qa/visual-upgrade")
+	output_dir = OS.get_environment("TAPTOP_QA_DIR")
+	if output_dir.is_empty(): output_dir = ProjectSettings.globalize_path("res://.qa/mobile-depth")
 	if not OS.has_feature("editor"): output_dir = OS.get_executable_path().get_base_dir().path_join(".qa/three-floors")
 	if OS.get_cmdline_user_args().has("--phone"):
 		root.size = Vector2i(360, 640)
 		output_dir = output_dir.path_join("phone")
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--size="):
+			var dimensions = arg.trim_prefix("--size=").split("x")
+			root.size = Vector2i(int(dimensions[0]), int(dimensions[1]))
+			output_dir = output_dir.path_join(arg.trim_prefix("--size="))
 	DirAccess.make_dir_recursive_absolute(output_dir)
 	app = load("res://main.tscn").instantiate()
 	root.add_child(app)
@@ -140,6 +157,8 @@ func _run() -> void:
 	expect(app.sheet.visible and app.sheet_text.text.contains("속도"), "Character details open")
 	await capture("character-detail")
 	app.sheet.hide()
+	await click("Formation")
+	await capture("management")
 	await click("Companion_ria")
 	expect(app.find_child("StartExpedition", true, false).disabled, "Incomplete party cannot depart")
 	await click("Companion_sera")
@@ -150,11 +169,20 @@ func _run() -> void:
 	await click("Front_ria")
 	expect(app.game.party[0].id == "ria", "Formation changes")
 	await click("Front_leon")
+	app.manage_sheet.hide()
 	app.game.reset(0)
 	app._render()
 	await click("ViewBuild")
 	expect(app.sheet.visible and app.sheet_text.text.contains("카드"), "Build view opens")
 	app.sheet.hide()
+	await click("ChooseRelic")
+	var initial_relic = app.game.relic_id
+	var other_relic = app.game.relic_offers[1]
+	await click("Relic_" + other_relic)
+	expect(app.game.relic_id == other_relic, "Relic selection by input")
+	await click("Relic_" + initial_relic)
+	await click("CloseManagement")
+	expect(not app.manage_sheet.visible, "Management closes by input")
 	await click("StartExpedition")
 	expect(app.game.phase == "exploration", "Start enters exploration")
 	for encounter in range(6):
@@ -165,6 +193,24 @@ func _run() -> void:
 		await event_ui()
 		await click("EnterBattle")
 		await capture("battle-%d-%d" % [app.game.floor_number, app.game.room])
+		for target_index in [1, 0]:
+			var target_id = app.game.enemies[target_index].id
+			var point = app.combat_arena.global_position + app.combat_arena.unit_position(target_id)
+			for pressed in [true, false]:
+				if touch_mode:
+					var touch = InputEventScreenTouch.new()
+					touch.position = root.get_final_transform() * point
+					touch.pressed = pressed
+					Input.parse_input_event(touch)
+				else:
+					var tap = InputEventMouseButton.new()
+					tap.position = point
+					tap.button_index = MOUSE_BUTTON_LEFT
+					tap.pressed = pressed
+					root.push_input(tap, true)
+				await process_frame
+			await settle()
+			expect(app.game.target_id == target_id, "Enemy targeting by actual input")
 		await fight_ui()
 		expect(app.game.phase == "reward", "Button path wins encounter %d" % encounter)
 		if app.game.phase != "reward": break
@@ -182,6 +228,14 @@ func _run() -> void:
 				await click("Learn_" + hero)
 		if app.game.phase == "rest":
 			await capture("rest-%d" % encounter)
+			if encounter == 0:
+				var original_size = root.size
+				root.size = Vector2i(412, 915)
+				await settle()
+				root.size = Vector2i(360, 560)
+				await capture("rest-after-resize")
+				root.size = original_size
+				await settle()
 			await click("RestRecover")
 			expect(app.game.rested, "Rest recovers once")
 			await click("RestEvent_" + app.game.party[0].id)
@@ -205,12 +259,14 @@ func _run() -> void:
 	app.game.routes[0].kind = "shrine"
 	app.game.choose_route(0)
 	app._render(true)
+	await click("OpenShrine")
 	await click("Forget_leon_guard")
 	await confirm(false)
 	expect(app.game.party[0].skills == ["guard"], "Cancel shrine removal")
 	await click("Forget_leon_guard")
 	await confirm(true)
 	expect(app.game.party[0].skills.is_empty() and app.game.event_used, "Special event removes skill")
+	app.manage_sheet.hide()
 	await capture("shrine-used")
 	app.game.enter_battle()
 	app.game._victory()

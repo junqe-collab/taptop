@@ -12,7 +12,9 @@ const RED = Color("ed887c")
 
 var game = Battle.new()
 var page: VBoxContainer
-var scroll: ScrollContainer
+var manage_sheet: AcceptDialog
+var manage_box: VBoxContainer
+var manage_mode = "party"
 var sheet: AcceptDialog
 var log_sheet: AcceptDialog
 var log_text: Label
@@ -35,6 +37,9 @@ func _ready() -> void:
 	regular_font.variation_opentype = {TextServerManager.get_primary_interface().name_to_tag("wght"): 500.0}
 	ui_theme.default_font = regular_font
 	ui_theme.default_font_size = 16
+	ui_theme.set_stylebox("panel", "AcceptDialog", _style(Color("16202c"), Color("617582")))
+	ui_theme.set_stylebox("embedded_border", "Window", _style(Color("16202c"), Color("617582")))
+	ui_theme.set_stylebox("embedded_unfocused_border", "Window", _style(Color("16202c"), Color("617582")))
 	ui_theme.set_color("font_color", "Label", INK)
 	ui_theme.set_color("font_color", "Button", INK)
 	ui_theme.set_color("font_hover_color", "Button", Color.WHITE)
@@ -45,17 +50,14 @@ func _ready() -> void:
 	ui_theme.set_stylebox("disabled", "Button", _style(Color("151e29"), Color("2b3541")))
 	ui_theme.set_stylebox("focus", "Button", _style(Color.TRANSPARENT, GOLD, 2))
 	theme = ui_theme
-	scroll = ScrollContainer.new()
-	scroll.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
-	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
-	add_child(scroll)
 	margins = MarginContainer.new()
-	margins.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	margins.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	for side in ["left", "right", "top", "bottom"]:
 		margins.add_theme_constant_override("margin_" + side, 12)
-	scroll.add_child(margins)
+	add_child(margins)
 	page = VBoxContainer.new()
 	page.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	page.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	page.add_theme_constant_override("separation", 12)
 	margins.add_child(page)
 	sheet = AcceptDialog.new()
@@ -78,7 +80,23 @@ func _ready() -> void:
 	log_sheet.add_child(log_scroll)
 	log_text = _label("", 14)
 	log_scroll.add_child(log_text)
-	resized.connect(_resize_battle)
+	manage_sheet = AcceptDialog.new()
+	manage_sheet.name = "Management"
+	manage_sheet.ok_button_text = "닫기"
+	add_child(manage_sheet)
+	manage_sheet.get_ok_button().name = "CloseManagement"
+	for dialog in [sheet, log_sheet, manage_sheet]:
+		dialog.get_ok_button().custom_minimum_size.y = 44
+	var manage_scroll = ScrollContainer.new()
+	manage_scroll.name = "ManagementScroll"
+	manage_scroll.custom_minimum_size = Vector2(280, 300)
+	manage_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	manage_sheet.add_child(manage_scroll)
+	manage_box = VBoxContainer.new()
+	manage_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	manage_box.add_theme_constant_override("separation", 10)
+	manage_scroll.add_child(manage_box)
+	resized.connect(_on_resized)
 	_render()
 
 
@@ -111,7 +129,7 @@ func _button(text: String, callback: Callable, node_name: String, primary = fals
 	button.mouse_filter = Control.MOUSE_FILTER_PASS
 	button.text = text
 	button.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	button.custom_minimum_size.y = 68
+	button.custom_minimum_size.y = 52
 	button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	button.pressed.connect(callback)
 	if primary:
@@ -152,19 +170,17 @@ func _render(reset_scroll = false) -> void:
 		page.remove_child(child)
 		child.queue_free()
 	combat_arena = null
-	page.add_theme_constant_override("separation", 6 if game.phase == "combat" else 12)
-	scroll.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED if game.phase == "combat" else ScrollContainer.SCROLL_MODE_AUTO
+	page.add_theme_constant_override("separation", 6 if game.phase == "combat" else 8)
 	if game.phase == "combat":
-		scroll.scroll_vertical = 0
 		_combat()
 		return
 	var top = HBoxContainer.new()
-	top.add_child(_label("T A P T O P", 15, GOLD))
-	var subtitle = _label("3층 원정" if game.phase == "camp" else "%d층 · %d/2구역" % [game.floor_number, game.room], 13, MUTED)
+	top.add_child(_label("T A P T O P", 14, GOLD))
+	var subtitle = _label("원정 준비" if game.phase == "camp" else "%d층 · %d/2구역" % [game.floor_number, game.room], 12, MUTED)
 	subtitle.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	top.add_child(subtitle)
 	page.add_child(top)
-	page.add_child(_label("골드 %d    ·    식량 %d    ·    돌파 %d/6" % [game.gold, game.food, game.wins], 13, GOLD))
+	page.add_child(_label("%d G    /    식량 %d    /    돌파 %d·6" % [game.gold, game.food, game.wins], 12, GOLD))
 	match game.phase:
 		"camp": _camp()
 		"exploration": _exploration()
@@ -173,11 +189,12 @@ func _render(reset_scroll = false) -> void:
 		"rest": _rest()
 		"complete": _ending(true)
 		"defeat": _ending(false)
-	if reset_scroll: scroll.set_deferred("scroll_vertical", 0)
+	if manage_sheet.visible: _render_management()
+
 
 func _heading(kicker: String, title: String, description: String) -> void:
 	page.add_child(_label(kicker, 13, GREEN))
-	page.add_child(_label(title, 27))
+	page.add_child(_label(title, 24))
 	if not description.is_empty():
 		page.add_child(_label(description, 15, MUTED))
 
@@ -185,6 +202,7 @@ func _heading(kicker: String, title: String, description: String) -> void:
 func _arena(battle = false, height = 125) -> void:
 	var arena = DungeonView.new()
 	arena.custom_minimum_size.y = height
+	arena.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	arena.heroes = game.party.duplicate(true)
 	arena.foes = game.enemies.duplicate(true)
 	arena.active_id = ""
@@ -210,117 +228,98 @@ func _bonus_text(bonuses: Dictionary, sign_value = 1) -> String:
 
 
 func _camp() -> void:
-	_heading("PARTY  /  원정 준비", "심연의 문을 향해", "스킬을 모으고, 나만의 세 사람을 완성하세요.")
-	_arena(false, 135)
+	_heading("PARTY / 짧은 원정, 달라지는 빌드", "심연의 문을 향해", "세 사람 · 여섯 전투 · 한 번의 도전")
+	_arena(false, 92)
+	var relic = Battle.Data.RELICS[game.relic_id]
+	page.add_child(_button("유물  /  " + relic.name + "  ›\n" + relic.description, _show_management.bind("relic"), "ChooseRelic"))
+	page.add_child(_label("동료와 유물을 고른 뒤 출발하세요. 진행은 저장되지 않습니다.", 12, MUTED))
+	_bottom()
 	var start = _button("원정 시작  →", _act.bind(game.explore, true), "StartExpedition", true)
 	start.disabled = game.companions.size() != 2
 	page.add_child(start)
-	_party_cards()
-	page.add_child(_label("동료 선택  %d / 2" % game.companions.size(), 17, GOLD))
-	var grid = _grid(2)
-	for id in Battle.Data.HEROES:
-		if id == "leon": continue
-		var hero = Battle.Data.HEROES[id]
-		var picked = game.companions.has(id)
-		var button = _choice_card(("✓ " if picked else "") + hero.name, hero.role + "\n" + Battle.SKILLS[hero.skill].name, hero.tile, "Companion_" + id, _act.bind(game.toggle_companion.bind(id)), GREEN if picked else MUTED)
-		button.disabled = not picked and game.companions.size() >= 2
-		grid.add_child(button)
-	page.add_child(_label("선택된 동료를 눌러 빼고, 다른 동료를 선택하세요.", 12, MUTED))
-	_formation()
-	page.add_child(_label("탐색 → 전투 → 휴식 · 3층 / 6전투\n스킬은 즉시 습득 · 전멸하면 원정 종료 · 저장 없음", 12, MUTED))
-	var bottom = HBoxContainer.new()
-	bottom.add_child(_label("SEED  %d" % game.run_seed, 11, MUTED))
-	bottom.add_child(_small_button("새 시드", _restart.bind(false), "NewSeed"))
-	page.add_child(bottom)
+
 
 func _exploration() -> void:
-	_heading("DEPTH %02d  /  탐색" % game.floor_number, Battle.Data.FLOORS[game.floor_number - 1], "보급과 위험 사이, 다음 발걸음을 고르세요.")
+	_heading("DEPTH %02d / 갈림길" % game.floor_number, Battle.Data.FLOORS[game.floor_number - 1], "")
 	_progress_track()
-	_arena(false, 110)
-	var branch = Control.new()
-	branch.custom_minimum_size.y = 40
-	branch.draw.connect(func():
-		var center = Vector2(branch.size.x / 2, 2)
-		for ratio in [0.25, 0.75]:
-			var end = Vector2(branch.size.x * ratio, 35)
-			branch.draw_polyline(PackedVector2Array([center, Vector2(center.x, 15), Vector2(end.x, 15), end]), Color("7e7057"), 2, true)
-			branch.draw_circle(end, 4, GOLD)
-	)
-	page.add_child(branch)
 	var choices = _grid(2)
+	choices.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	for i in range(game.routes.size()):
 		var route = game.routes[i]
 		var data = Battle.Data.ROUTES[route.kind]
+		var field = Battle.Data.BATTLEFIELDS[route.field]
+		var tint = RED if route.risk else GREEN
 		var button = _button("", _act.bind(game.choose_route.bind(i), true), "Route_%d" % i)
-		button.custom_minimum_size.y = 222
-		button.add_theme_stylebox_override("normal", _style(Color("2b2429") if route.risk else Color("202f30"), RED.darkened(0.5) if route.risk else GREEN.darkened(0.5)))
+		button.custom_minimum_size.y = 290
+		button.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		button.add_theme_stylebox_override("normal", _style(Color("2b2429") if route.risk else Color("202f30"), tint.darkened(0.4)))
 		choices.add_child(button)
 		var face = _card_content(button)
-		face.add_child(_label("위험 경로  /  +12 G" if route.risk else "일반 경로", 11, RED if route.risk else GREEN))
-		face.add_child(_portrait({"cache": 91, "supply": 91, "shrine": 33, "spring": 111, "shop": 101}[route.kind], 40))
-		face.add_child(_label(data.name, 16, INK))
-		face.add_child(_label(data.description, 11, MUTED))
+		face.add_child(_label("위험  /  +12 G" if route.risk else "일반 경로", 13, tint))
+		face.add_child(_portrait({"cache": 91, "supply": 91, "shrine": 33, "spring": 111, "shop": 101}[route.kind], 44))
+		face.add_child(_label(data.name, 16))
+		face.add_child(_label(data.description, 12, MUTED))
+		face.add_child(_label(field.name, 14, Color(field.color)))
+		face.add_child(_label(field.description, 12, Color(field.color)))
+		var space = Control.new()
+		space.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		space.size_flags_vertical = Control.SIZE_EXPAND_FILL
+		face.add_child(space)
 		var foe_row = HBoxContainer.new()
 		foe_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		for key in route.foes: foe_row.add_child(_portrait(Battle.Data.FOES[key].tile, 24))
+		for key in route.foes: foe_row.add_child(_portrait(Battle.Data.FOES[key].tile, 28))
 		face.add_child(foe_row)
 		var names: Array[String] = []
 		for key in route.foes: names.append(Battle.Data.FOES[key].name)
-		face.add_child(_label(" · ".join(names), 10, RED))
-		if route.risk: face.add_child(_label("적 체력 +5 / 공격 +1", 10, MUTED))
-	_party_cards()
-	_formation()
+		face.add_child(_label(" · ".join(names), 11, RED))
+		face.add_child(_label("적 HP +5 / 공격 +1" if route.risk else "카드를 눌러 이동 →", 11, tint))
+	_bottom()
+
 
 func _formation() -> void:
-	var header = HBoxContainer.new()
-	header.add_child(_label("전열  ·  " + game.party[0].name, 13, GOLD))
-	header.add_child(_small_button("빌드", _show_build, "ViewBuild"))
-	page.add_child(header)
 	var row = HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 6)
 	page.add_child(row)
-	for hero in game.party:
-		var button = _button(("◆ " if hero == game.party[0] else "") + hero.name, _act.bind(game.set_front.bind(hero.id)), "Front_" + hero.id)
+	row.add_child(_button("편성 · 전열", _show_management.bind("party"), "Formation"))
+	row.add_child(_button("빌드 · 유물", _show_build, "ViewBuild"))
+	row.add_child(_button("도움말", _help, "Help"))
+	for button in row.get_children():
 		button.custom_minimum_size.y = 44
 		button.add_theme_font_size_override("font_size", 12)
-		button.disabled = hero == game.party[0]
-		row.add_child(button)
+
 
 func _event() -> void:
 	var data = Battle.Data.ROUTES[game.route.kind]
-	_heading("발견  /  " + ("거래" if game.route.kind == "shop" else "탐색 이벤트"), data.name, data.description)
-	if not game.reward_message.is_empty(): page.add_child(_label(game.reward_message, 14, GREEN))
+	_heading("발견 / " + game.battlefield().name, data.name, "")
 	if not selected_item.is_empty():
 		_recipient()
 		return
 	match game.route.kind:
 		"cache":
-			_arena(false, 110)
-			var grid = _grid(2)
-			for key in game.gear_offers: _gear_offer(key, false, grid)
-			if game.event_used: page.add_child(_label("보급 완료", 17, GREEN))
+			page.add_child(_label("장비 하나를 골라 동료에게 배분하세요.", 13, MUTED))
+			for key in game.gear_offers: _gear_offer(key, false)
+			if game.event_used: _arena(false, 100)
 		"shop": _shop()
 		"shrine":
 			_arena(false, 100)
-			_shrine()
-		_: _arena(false, 150)
+			page.add_child(_label("스킬 하나를 해제해 새 빌드를 준비하세요.", 14, MUTED))
+			var button = _button("제단에 바칠 스킬 선택", _show_management.bind("shrine"), "OpenShrine")
+			button.disabled = game.event_used
+			page.add_child(button)
+		_: _arena(false, 120)
+	if not game.reward_message.is_empty(): page.add_child(_label(game.reward_message, 13, GREEN))
+	_bottom(false)
 	page.add_child(_button("전장으로  →", _act.bind(game.enter_battle, true), "EnterBattle", true))
-	page.add_child(_label("떠나면 남은 상품과 습득 기회는 사라집니다.", 11, MUTED))
-	_party_cards()
-	_formation()
+
 
 func _gear_offer(key: String, in_shop: bool, parent: Node = null) -> void:
 	var gear = Battle.GEAR[key]
-	var button = _button("", _pick_item.bind("gear", key), "Gear_" + key)
-	button.custom_minimum_size.y = 162
+	var button = _button("%s  ·  %s\n%s" % [gear.name, ("%d G" % gear.price) if in_shop else ("무기" if gear.slot == "weapon" else "방어구"), _bonus_text(gear.bonus)], _pick_item.bind("gear", key), "Gear_" + key)
+	button.custom_minimum_size.y = 74
+	button.add_theme_font_size_override("font_size", 14)
 	button.disabled = in_shop and game.gold < gear.price
-	var holder = page if parent == null else parent
-	holder.add_child(button)
-	var face = _card_content(button)
-	face.add_child(_label(("무기" if gear.slot == "weapon" else "방어구") + ("   %d G" % gear.price if in_shop else "  /  보급"), 11, GOLD))
-	face.add_child(_skill_art("shield" if gear.slot == "armor" else ("magic" if gear.bonus.has("matk") else "physical"), GOLD))
-	face.add_child(_label(gear.name, 15))
-	face.add_child(_label(_bonus_text(gear.bonus), 12, GREEN))
+	(page if parent == null else parent).add_child(button)
+
 
 func _shop() -> void:
 	var tabs = HBoxContainer.new()
@@ -332,35 +331,25 @@ func _shop() -> void:
 		tab.custom_minimum_size.y = 44
 		tabs.add_child(tab)
 	if shop_tab == 0:
-		page.add_child(_label("구입 즉시 습득 · 빈 슬롯이 필요합니다.", 12, MUTED))
-		var grid = _grid(2)
 		for key in game.shop_skills:
 			var skill = Battle.SKILLS[key]
-			var available = false
-			for hero in game.party:
-				if game.can_learn(hero.id, key): available = true
-			var button = _button("", _pick_item.bind("skill", key), "ShopSkill_" + key)
-			button.custom_minimum_size.y = 188
+			var available = game.party.any(func(hero): return game.can_learn(hero.id, key))
+			var button = _button("%s  ·  %d G  /  %d MP\n%s\n%s" % [skill.name, game.skill_price(key), skill.cost, skill.description, _bonus_text(skill.bonus) if available else "습득 가능한 빈 슬롯 없음"], _pick_item.bind("skill", key), "ShopSkill_" + key)
+			button.custom_minimum_size.y = 78
+			button.add_theme_font_size_override("font_size", 13)
 			button.disabled = not available or game.gold < game.skill_price(key)
-			grid.add_child(button)
-			var face = _card_content(button)
-			face.add_child(_label("%d G    /    %d MP" % [game.skill_price(key), skill.cost], 12, GOLD))
-			face.add_child(_skill_art(skill.kind, _skill_color(skill.kind)))
-			face.add_child(_label(skill.name, 16))
-			face.add_child(_label(skill.description, 11, MUTED))
-			face.add_child(_label(_bonus_text(skill.bonus), 11, GREEN))
-			if not available: face.add_child(_label("빈 슬롯 / 중복 확인", 10, RED))
+			page.add_child(button)
 		if game.shop_skills.is_empty(): page.add_child(_label("스킬 품절", 16, MUTED))
 	elif shop_tab == 1:
-		var grid = _grid(2)
-		for key in game.shop_gear: _gear_offer(key, true, grid)
+		for key in game.shop_gear: _gear_offer(key, true)
 		if game.shop_gear.is_empty(): page.add_child(_label("장비 품절", 16, MUTED))
 	else:
-		_arena(false, 120)
-		page.add_child(_label("휴식 한 번을 위한 식량\n보유 %d개 · 체력과 마력을 회복할 때 사용" % game.food, 15))
+		_arena(false, 100)
+		page.add_child(_label("휴식에서 체력 55% · 마력 60% 회복", 14, MUTED))
 		var button = _button("식량 +1  ·  16 G" if game.food_stock else "식량 품절", _act.bind(game.buy_food), "BuyFood", true)
 		button.disabled = not game.food_stock or game.gold < 16
 		page.add_child(button)
+
 
 func _pick_item(kind: String, key: String) -> void:
 	selected_kind = kind
@@ -390,40 +379,25 @@ func _recipient() -> void:
 			var button = _choice_card(hero.name, "스킬 %d / %d\n즉시 습득" % [hero.skills.size(), hero.level], hero.tile, "BuySkill_" + hero.id, _act.bind(game.buy_skill.bind(selected_item, hero.id), true))
 			button.disabled = not game.can_learn(hero.id, selected_item)
 			grid.add_child(button)
+	_spacer()
 	page.add_child(_button("선택 취소", _cancel_item, "CancelItem"))
 
-func _shrine() -> void:
-	page.add_child(_label("해제하면 스킬과 습득 능력치가 함께 사라집니다.\n빈 슬롯은 이후 드랍이나 상점에서 새로 채웁니다.", 14, MUTED))
-	if game.event_used:
-		page.add_child(_label("제단의 힘을 사용했습니다.", 16, GREEN))
-		return
-	for hero in game.party:
-		for key in hero.skills:
-			var skill = Battle.SKILLS[key]
-			var action = game.forget_skill.bind(hero.id, key)
-			var button = _button("%s · %s 해제\n%s" % [hero.name, skill.name, _bonus_text(skill.bonus, -1)],
-				_confirm.bind("스킬 해제", "%s의 %s을 해제합니다.\n%s" % [hero.name, skill.name, _bonus_text(skill.bonus, -1)], action), "Forget_" + hero.id + "_" + key)
-			button.add_theme_font_size_override("font_size", 14)
-			page.add_child(button)
+
 
 
 func _party_cards() -> void:
 	var row = HBoxContainer.new()
-	row.add_theme_constant_override("separation", 8)
+	row.add_theme_constant_override("separation", 6)
 	page.add_child(row)
 	for hero in game.party:
 		var button = _button("", _inspect.bind(hero.id), "Hero_" + hero.id)
-		button.custom_minimum_size.y = 112
+		button.custom_minimum_size.y = 70
 		row.add_child(button)
-		var face = _card_content(button, 7)
-		var head = HBoxContainer.new()
-		head.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		head.add_child(_portrait(hero.tile, 26))
-		head.add_child(_label("%s\nLv.%d" % [hero.name, hero.level], 12))
-		face.add_child(head)
-		face.add_child(_meter(hero.hp, hero.max_hp, RED if hero.hp == 0 else GREEN))
-		face.add_child(_label("HP %d/%d  ·  MP %d" % [hero.hp, hero.max_hp, hero.mp], 10, MUTED))
-		face.add_child(_label("스킬  " + "◆".repeat(hero.skills.size()) + "◇".repeat(maxi(0, hero.level - hero.skills.size())), 11, GOLD))
+		var face = _card_content(button, 6)
+		face.add_child(_label(("◆ " if hero == game.party[0] else "") + hero.name + " · %d" % hero.level, 12, GREEN if hero.hp > 0 else RED))
+		face.add_child(_meter(hero.hp, hero.max_hp, GREEN if hero.hp > 0 else RED))
+		face.add_child(_label("%d/%d  ·  MP %d" % [hero.hp, hero.max_hp, hero.mp], 10, MUTED))
+
 
 func _popup(dialog: AcceptDialog) -> void:
 	var area = get_viewport_rect().size
@@ -454,7 +428,8 @@ func _inspect(id: String) -> void:
 
 
 func _show_build() -> void:
-	var lines: Array[String] = ["보유 스킬 하나가 소유자 전용 카드 한 장입니다.", "매 라운드 최대 5장. 추가 습득은 능력치와 덱을 모두 바꿉니다.", ""]
+	var relic = Battle.Data.RELICS[game.relic_id]
+	var lines: Array[String] = ["유물: " + relic.name + " · " + relic.description, "전장: " + game.battlefield().name + " · " + game.battlefield().description, "", "보유 스킬 하나가 소유자 전용 카드 한 장입니다.", "매 라운드 최대 5장. 추가 습득은 능력치와 덱을 모두 바꿉니다.", ""]
 	for hero in game.party:
 		lines.append("%s · Lv.%d · 스킬 %d/%d" % [hero.name, hero.level, hero.skills.size(), hero.level])
 		for key in hero.skills:
@@ -476,7 +451,7 @@ func _combat() -> void:
 	page.add_child(header)
 	var timeline = HBoxContainer.new()
 	timeline.name = "Timeline"
-	timeline.custom_minimum_size.y = 34
+	timeline.custom_minimum_size.y = 28
 	timeline.add_theme_constant_override("separation", 4)
 	page.add_child(timeline)
 	for entry in game.order:
@@ -495,15 +470,22 @@ func _combat() -> void:
 	combat_arena.active_id = game.selected_caster
 	combat_arena.in_battle = true
 	combat_arena.floor_number = game.floor_number
-	combat_arena.inspected.connect(_inspect)
+	combat_arena.inspected.connect(_battle_unit_tapped)
+	combat_arena.target_id = game.target_id
+	combat_arena.field_color = Color(game.battlefield().color)
 	page.add_child(combat_arena)
+	page.add_child(_label(game.battlefield().name + " · " + game.battlefield().description, 11, Color(game.battlefield().color)))
 	_resize_battle()
 	var banner = PanelContainer.new()
 	banner.custom_minimum_size.y = 42
-	banner.add_theme_stylebox_override("panel", _style(Color("182332"), Color("394759")))
-	action_banner = _label("카드 선택 → 행동 시작\n선택한 한 명의 스킬 + 나머지는 기본 공격", 12, MUTED)
+	var banner_style = _style(Color("182332"), Color("394759"))
+	banner_style.content_margin_top = 4
+	banner_style.content_margin_bottom = 4
+	banner.add_theme_stylebox_override("panel", banner_style)
+	action_banner = _label("적을 눌러 집중 공격 · 카드 하나 선택\n나머지 동료는 기본 공격", 12, MUTED)
 	if not game.selected_skill.is_empty():
 		action_banner.text = "%s · %s\n%s" % [game.find_unit(game.selected_caster).name, Battle.SKILLS[game.selected_skill].name, Battle.SKILLS[game.selected_skill].description]
+		action_banner.text += " · " + game.attack_target().name
 		action_banner.add_theme_color_override("font_color", GOLD)
 	if animating: action_banner.text = "행동 진행 중\n공격자와 대상이 전장에 표시됩니다."
 	elif game.cursor >= game.order.size(): action_banner.text = game.log_lines.back()
@@ -518,6 +500,12 @@ func _combat() -> void:
 	basic.add_theme_font_size_override("font_size", 13)
 	basic.disabled = animating or game.cursor > 0
 	actions.add_child(basic)
+	var redraw = _button("교체 완료" if game.redraw_used else "손패 교체", _act.bind(game.redraw_hand, true), "RedrawHand")
+	redraw.custom_minimum_size = Vector2(94, 52)
+	redraw.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	redraw.add_theme_font_size_override("font_size", 12)
+	redraw.disabled = animating or not game.can_redraw()
+	actions.add_child(redraw)
 	var resolve_button: Button
 	if not animating and game.cursor >= game.order.size():
 		resolve_button = _button("다음 라운드  →", _act.bind(game.next_round, true), "NextRound", true)
@@ -530,10 +518,10 @@ func _combat() -> void:
 	call_deferred("_resize_battle")
 
 func _skill_cards() -> void:
-	page.add_child(_label("손패 %d  /  덱 %d  /  버림 %d       좌우로 넘겨 선택" % [game.hand.size(), game.draw_pile.size(), game.discard_pile.size()], 11, MUTED))
+	page.add_child(_label("손패 %d · 덱 %d  /  좌우로 넘겨 선택" % [game.hand.size(), game.draw_pile.size()], 11, MUTED))
 	var tray = ScrollContainer.new()
 	tray.name = "HandTray"
-	tray.custom_minimum_size.y = 153
+	tray.custom_minimum_size.y = 139
 	tray.vertical_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	tray.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_SHOW_ALWAYS
 	tray.follow_focus = true
@@ -547,8 +535,8 @@ func _skill_cards() -> void:
 		var tint = _skill_color(skill.kind)
 		var selected = game.selected_skill == entry.skill and game.selected_caster == hero.id
 		var button = _button("", _act.bind(game.choose_card.bind(hero.id, entry.skill)), "Skill_" + hero.id + "_" + entry.skill)
-		button.custom_minimum_size = Vector2(116, 136)
-		button.disabled = animating or game.cursor > 0 or hero.hp <= 0 or hero.mp < skill.cost
+		button.custom_minimum_size = Vector2(124, 122)
+		button.disabled = animating or game.cursor > 0 or hero.hp <= 0 or hero.mp < game.skill_cost(entry.skill)
 		button.add_theme_stylebox_override("normal", _style(Color("303429") if selected else Color("1b2533"), GOLD if selected else tint.darkened(0.5), 2 if selected else 1))
 		cards.add_child(button)
 		var face = _card_content(button, 7)
@@ -556,11 +544,13 @@ func _skill_cards() -> void:
 		owner.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		owner.add_child(_portrait(hero.tile, 18))
 		owner.add_child(_label(hero.name, 11, MUTED))
-		owner.add_child(_label("%d MP" % skill.cost, 11, tint))
+		owner.add_child(_label("%d MP" % game.skill_cost(entry.skill), 11, tint))
 		face.add_child(owner)
-		face.add_child(_skill_art(skill.kind, tint))
+		var art = _skill_art(skill.kind, tint)
+		art.custom_minimum_size.y = 26
+		face.add_child(art)
 		face.add_child(_label(("✓ " if selected else "") + skill.name, 13, GOLD if selected else INK))
-		face.add_child(_label("마력 부족" if hero.mp < skill.cost else skill.description, 10, RED if hero.mp < skill.cost else MUTED))
+		face.add_child(_label("마력 부족" if hero.mp < game.skill_cost(entry.skill) else skill.description, 10, RED if hero.mp < game.skill_cost(entry.skill) else MUTED))
 		if button.disabled: face.modulate = Color(0.66, 0.66, 0.70)
 	tray.set_deferred("scroll_horizontal", hand_offset)
 
@@ -570,12 +560,14 @@ func _resolve_round() -> void:
 	_render()
 	while game.resolving:
 		game.step_action()
+		combat_arena.target_id = game.target_id
 		var event = game.last_action.duplicate(true)
 		var targets: Array[String] = []
 		for effect in event.effects:
 			var target_name = game.find_unit(effect.target).name
 			if not targets.has(target_name): targets.append(target_name)
 		action_banner.text = "%s  →  %s\n%s" % [game.find_unit(event.actor).name, "행동 취소" if event.cancelled else " · ".join(targets), event.name]
+		if not event.get("relic", "").is_empty(): action_banner.text += " · " + event.relic
 		action_banner.add_theme_color_override("font_color", GREEN if game.party.has(game.find_unit(event.actor)) else RED)
 		var timeline = find_child("Timeline", true, false)
 		for cell in timeline.get_children():
@@ -608,12 +600,15 @@ func _reward() -> void:
 		button.disabled = not game.can_learn(hero.id)
 		grid.add_child(button)
 	page.add_child(_label("포기하면 사라집니다. 스킬은 보관할 수 없습니다.", 12, MUTED))
+	_spacer()
 	var row = HBoxContainer.new()
 	row.add_child(_button("이 스킬 포기", _confirm.bind("스킬 습득 포기", skill.name + "을 포기합니다.\n다시 사용하려면 새로 획득해야 합니다.", game.skip_drop), "SkipReward"))
 	row.add_child(_button("현재 빌드", _show_build, "ViewBuild"))
 	page.add_child(row)
 
 func _confirm(title: String, message: String, action: Callable) -> void:
+	var return_to_management = manage_sheet.visible
+	manage_sheet.hide()
 	var dialog = ConfirmationDialog.new()
 	dialog.name = "ChoiceConfirmation"
 	dialog.title = title
@@ -621,52 +616,66 @@ func _confirm(title: String, message: String, action: Callable) -> void:
 	dialog.ok_button_text = "확인"
 	dialog.cancel_button_text = "취소"
 	dialog.confirmed.connect(func():
+		dialog.hide()
 		_act(action, true)
-		dialog.queue_free())
-	dialog.canceled.connect(dialog.queue_free)
+		dialog.queue_free()
+		if return_to_management: _show_management(manage_mode))
+	dialog.canceled.connect(func():
+		dialog.hide()
+		dialog.queue_free()
+		if return_to_management: _show_management(manage_mode))
 	add_child(dialog)
 	dialog.popup_centered(Vector2i(int(minf(370, get_viewport_rect().size.x - 20)), 210))
 
 
 func _rest() -> void:
-	_heading("REST  /  숨 고르기", "모닥불 곁에서", "다음 전투를 위한 짧은 쉼.")
-	_arena(false, 130)
+	_heading("REST / 숨 고르기", "모닥불 곁에서", "")
 	_party_cards()
-	var recover = _button("회복 완료" if game.rested else "불 곁에서 회복  ·  식량 1개", _act.bind(game.rest), "RestRecover", true)
+	if get_viewport_rect().size.y >= 760: _arena(false, 70)
+	var recover = _button("회복 완료" if game.rested else "식량 1개 · 체력 55% / 마력 60% 회복", _act.bind(game.rest), "RestRecover", true)
+	recover.add_theme_font_size_override("font_size", 14)
 	recover.disabled = game.rested or game.food <= 0
 	page.add_child(recover)
-	page.add_child(_label("식량 %d개  ·  체력 55%% / 마력 60%% 회복" % game.food, 12, MUTED))
-	if game.food <= 0 and not game.rested: page.add_child(_label("식량이 없어 이번 휴식에서는 회복할 수 없습니다.", 12, RED))
+	if game.food <= 0 and not game.rested: page.add_child(_label("식량 부족 · 이번 휴식에서는 회복할 수 없습니다.", 12, RED))
 	var event_box = _panel(Color("282822"))
-	event_box.add_child(_label(game.rest_event.name, 19, GOLD))
-	event_box.add_child(_label(game.rest_event.description, 13, MUTED))
-	event_box.add_child(_label(_bonus_text(game.rest_event.bonus), 14, GREEN))
+	event_box.add_child(_label(game.rest_event.name, 17, GOLD))
+	event_box.add_child(_label(_bonus_text(game.rest_event.bonus), 13, GREEN))
 	if game.rest_event_used:
-		event_box.add_child(_label("이벤트 적용 완료", 14, GREEN))
+		event_box.add_child(_label("동료에게 적용 완료", 13, GREEN))
 	else:
-		var grid = _grid(3)
+		var row = HBoxContainer.new()
+		event_box.add_child(_label("이야기를 나눌 동료", 12, MUTED))
+		event_box.add_child(row)
 		for hero in game.party:
-			grid.add_child(_choice_card(hero.name, "이벤트 적용", hero.tile, "RestEvent_" + hero.id, _act.bind(game.apply_rest_event.bind(hero.id)), GOLD, 112))
+			var button = _button(hero.name, _act.bind(game.apply_rest_event.bind(hero.id)), "RestEvent_" + hero.id)
+			button.custom_minimum_size.y = 44
+			row.add_child(button)
+	_spacer()
+	_formation()
 	var next_text = "%d층으로 내려가기" % (game.floor_number + 1) if game.room == 2 else "다음 구역으로"
 	page.add_child(_button(next_text + ("  →" if game.rested else " · 회복 없이 →"), _act.bind(game.continue_run, true), "ContinueRun", true))
-	_formation()
+
 
 func _ending(won: bool) -> void:
-	_heading("원정 완료" if won else "원정 실패", "심연의 문을 열었다" if won else "다시 모닥불 앞으로",
-		"세 개의 층을 돌파했습니다." if won else "파티가 모두 쓰러졌습니다. 빌드와 경로를 바꿔 도전하세요.")
-	_arena(false, 135)
-	_party_cards()
+	_heading("EXPEDITION / " + ("완료" if won else "실패"), "심연의 문을 열었다" if won else "다시 모닥불 앞으로", "새 유물과 동료로 다른 빌드를 만들어 보세요.")
+	_arena(false, 80)
 	var summary = _panel()
-	summary.add_child(_label("%d/6 전투 돌파 · 총 %d라운드" % [game.wins, game.total_rounds], 19, GOLD))
-	summary.add_child(_label("원정 시드 %d" % game.run_seed, 14, MUTED))
-	page.add_child(_button("새 원정 준비", _restart.bind(false), "Restart", true))
-	page.add_child(_button("같은 시드로 재도전", _restart.bind(true), "ReplaySeed"))
-	page.add_child(_button("최종 빌드 보기", _show_build, "ViewBuild"))
-	page.add_child(_button("원정 기록", _show_log, "FullLog"))
+	summary.add_child(_label("%d/6 돌파 · %d라운드 · %s" % [game.wins, game.total_rounds, Battle.Data.RELICS[game.relic_id].name], 14, GOLD))
+	summary.add_child(_label("SEED %d" % game.run_seed, 12, MUTED))
+	_party_cards()
+	var details = HBoxContainer.new()
+	details.add_child(_button("최종 빌드", _show_build, "ViewBuild"))
+	details.add_child(_button("원정 기록", _show_log, "FullLog"))
+	page.add_child(details)
+	var retry = HBoxContainer.new()
+	retry.add_child(_button("새 원정", _restart.bind(false), "Restart", true))
+	retry.add_child(_button("같은 시드", _restart.bind(true), "ReplaySeed"))
+	page.add_child(retry)
 
 
 func _restart(same_seed = false) -> void:
 	if animating: return
+	manage_sheet.hide()
 	game.reset(game.run_seed if same_seed else -1)
 	selected_item = ""
 	selected_kind = ""
@@ -677,7 +686,7 @@ func _resize_battle() -> void:
 		var occupied = 24.0 + (page.get_child_count() - 1) * 6
 		for child in page.get_children():
 			if child != combat_arena: occupied += child.get_combined_minimum_size().y
-		combat_arena.custom_minimum_size.y = maxf(185, get_viewport_rect().size.y - occupied - 8)
+		combat_arena.custom_minimum_size.y = maxf(210, get_viewport_rect().size.y - occupied - 8)
 
 func _toggle_speed() -> void:
 	action_delay = 0.38 if action_delay >= 0.5 else 0.85
@@ -787,3 +796,85 @@ func _progress_track() -> void:
 		panel.add_child(label)
 		track.add_child(panel)
 	page.add_child(track)
+
+func _spacer() -> void:
+	var space = Control.new()
+	space.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	page.add_child(space)
+
+
+func _bottom(show_party = true) -> void:
+	if not page.get_children().any(func(child): return child.size_flags_vertical & Control.SIZE_EXPAND): _spacer()
+	if show_party: _party_cards()
+	_formation()
+
+
+func _battle_unit_tapped(id: String) -> void:
+	if game.enemies.has(game.find_unit(id)) and not animating and game.choose_target(id):
+		_render()
+	elif not animating:
+		_inspect(id)
+
+
+func _help() -> void:
+	sheet.title = "원정 안내"
+	sheet_text.text = "탐색 → 전투 → 휴식 · 총 6전투\n\n원정마다 유물과 전장 특성이 달라집니다. 전장 설명은 적과 아군 중 누구에게 적용되는지 보여줍니다.\n\n적을 누르면 집중 공격 대상으로 지정합니다. 한 라운드에 카드 하나를 선택하고 나머지 동료는 기본 공격합니다. 집중 대상이 쓰러지면 생존 적을 공격합니다.\n\n손패 교체는 전투당 한 번입니다. 덱에 다른 카드가 있어야 합니다. 순서와 적 예고는 유지됩니다.\n\n적과 아군의 순서를 보고 방어막과 치유를 선택하세요. 방어막은 받는 캐릭터의 다음 행동 때 사라집니다.\n\n캐릭터별 레벨만큼 스킬을 배울 수 있습니다. 캐릭터를 누르면 자세한 능력치와 스킬을 확인합니다.\n\n전멸하면 원정 종료. 진행은 저장되지 않습니다."
+	_popup(sheet)
+
+
+func _show_management(mode: String) -> void:
+	manage_mode = mode
+	_render_management()
+	_popup(manage_sheet)
+
+
+func _render_management() -> void:
+	for child in manage_box.get_children():
+		manage_box.remove_child(child)
+		child.queue_free()
+	match manage_mode:
+		"party":
+			manage_sheet.title = "동료와 전열"
+			if game.phase == "camp":
+				manage_box.add_child(_label("동료 %d / 2 · 선택한 동료를 누르면 해제" % game.companions.size(), 14, GOLD))
+				for id in Battle.Data.HEROES:
+					if id == "leon": continue
+					var data = Battle.Data.HEROES[id]
+					var picked = game.companions.has(id)
+					var button = _button(("✓ " if picked else "") + data.name + " · " + data.role + "\n" + Battle.SKILLS[data.skill].name, _act.bind(game.toggle_companion.bind(id)), "Companion_" + id)
+					button.disabled = not picked and game.companions.size() >= 2
+					button.add_theme_font_size_override("font_size", 14)
+					manage_box.add_child(button)
+			manage_box.add_child(_label("전열 · 적의 전열 공격을 받는 동료", 14, GOLD))
+			for hero in game.party:
+				var button = _button(("◆ " if hero == game.party[0] else "") + hero.name, _act.bind(game.set_front.bind(hero.id)), "Front_" + hero.id)
+				button.disabled = hero == game.party[0] or game.phase not in ["camp", "exploration", "event", "rest"]
+				manage_box.add_child(button)
+		"relic":
+			manage_sheet.title = "이번 원정의 유물 · 하나 선택"
+			for id in game.relic_offers:
+				var data = Battle.Data.RELICS[id]
+				var button = _button(("✓ " if id == game.relic_id else "") + data.name + "\n" + data.description, _act.bind(game.choose_relic.bind(id)), "Relic_" + id, id == game.relic_id)
+				button.custom_minimum_size.y = 76
+				button.add_theme_font_size_override("font_size", 14)
+				manage_box.add_child(button)
+			manage_box.add_child(_label("SEED %d · 같은 시드와 선택은 같은 결과" % game.run_seed, 12, MUTED))
+			manage_box.add_child(_button("새 시드로 준비", _restart.bind(false), "NewSeed"))
+		"shrine":
+			manage_sheet.title = "망각의 제단"
+			manage_box.add_child(_label("스킬과 습득 능력치가 함께 제거됩니다.", 14, MUTED))
+			if game.event_used:
+				manage_box.add_child(_label("제단 사용 완료", 16, GREEN))
+				return
+			for hero in game.party:
+				for key in hero.skills:
+					var skill = Battle.SKILLS[key]
+					var button = _button(hero.name + " · " + skill.name + " 해제\n" + _bonus_text(skill.bonus, -1), _confirm.bind("스킬 해제", hero.name + " · " + skill.name + "을 해제합니다.", game.forget_skill.bind(hero.id, key)), "Forget_" + hero.id + "_" + key)
+					button.add_theme_font_size_override("font_size", 14)
+					manage_box.add_child(button)
+
+func _on_resized() -> void:
+	if game.phase == "combat": _resize_battle()
+	else: _render()
+	for dialog in [sheet, log_sheet, manage_sheet]:
+		if dialog.visible: _popup(dialog)

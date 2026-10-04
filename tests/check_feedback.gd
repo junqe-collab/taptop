@@ -33,7 +33,9 @@ func finish() -> void:
 
 func _run() -> void:
 	root.size = Vector2i(360, 640)
-	output_dir = ProjectSettings.globalize_path("res://.qa/visual-upgrade/feedback")
+	output_dir = OS.get_environment("TAPTOP_QA_DIR")
+	if output_dir.is_empty(): output_dir = ProjectSettings.globalize_path("res://.qa/mobile-depth")
+	output_dir = output_dir.path_join("feedback")
 	DirAccess.make_dir_recursive_absolute(output_dir)
 	app = load("res://main.tscn").instantiate()
 	root.add_child(app)

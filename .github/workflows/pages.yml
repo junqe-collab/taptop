@@ -49,6 +49,7 @@ jobs:
           godot="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
           "$godot" --headless --path . --editor --import
           "$godot" --headless --path . --script res://tests/check_battle.gd
+          "$godot" --headless --path . --script res://tests/check_depth.gd
           mkdir -p exports/web
           "$godot" --headless --path . --export-release Web exports/web/index.html
           test -s exports/web/index.html

@@ -14,6 +14,8 @@ var active_id = ""
 var in_battle = false
 var floor_number = 1
 var resting = false
+var target_id = ""
+var field_color = Color("9caab9")
 var action: Dictionary = {}
 var progress = 1.0
 var after_units: Dictionary = {}
@@ -43,10 +45,10 @@ func _inspect_input(event: InputEvent) -> void:
 func unit_position(id: String) -> Vector2:
 	for i in range(heroes.size()):
 		if heroes[i].id == id:
-			if in_battle: return Vector2(size.x * (0.18 + i * 0.32), size.y - 86)
+			if in_battle: return Vector2(size.x * (0.18 + i * 0.32), size.y - 76)
 			return Vector2(size.x * (0.17 + i * 0.23), size.y * 0.55)
 	for i in range(foes.size()):
-		if foes[i].id == id: return Vector2(size.x * (0.30 + i * 0.40), 70)
+		if foes[i].id == id: return Vector2(size.x * (0.30 + i * 0.40), 56)
 	return size * 0.5
 
 func play_action(event: Dictionary, next_heroes: Array, next_foes: Array, duration: float) -> void:
@@ -74,7 +76,11 @@ func _text(value: String, center: Vector2, pixels: int, color: Color) -> void:
 
 func _background() -> void:
 	var stone = [Color("242c37"), Color("1f303b"), Color("302639")][clampi(floor_number - 1, 0, 2)]
-	draw_style_box(_frame(stone, Color("47505f")), Rect2(Vector2.ZERO, size))
+	draw_style_box(_frame(stone.lerp(field_color, 0.10) if in_battle else stone, field_color.darkened(0.45) if in_battle else Color("47505f")), Rect2(Vector2.ZERO, size))
+	if in_battle:
+		for i in range(16):
+			var particle = Vector2(fmod(i * 73.0 + sin(elapsed + i) * 8 + size.x, size.x), fmod(i * 47.0 - elapsed * (8 + i % 4) + size.y * 100, size.y))
+			draw_circle(particle, 1 + i % 2, Color(field_color, 0.12 + sin(elapsed * 2 + i) * 0.06))
 	var cell = 28.0
 	for y in range(1, ceili(size.y / cell)):
 		for x in range(ceili(size.x / cell)):
@@ -130,9 +136,14 @@ func _draw_unit(unit: Dictionary, friendly: bool) -> void:
 		if hit and progress > 0.43 and progress < 0.75:
 			pos.x += sin(progress * 95) * 4 * (1 - progress)
 	var accent = GREEN if friendly else RED
-	var sprite_size = 56.0 if in_battle else 42.0
+	var sprite_size = 56.0 if in_battle else clampf(size.y * 0.24, 42, 76)
 	var alpha = 1.0 if display.hp > 0 else 0.28
 	draw_ellipse_shadow(pos + Vector2(0, 25), Vector2(27, 8))
+	if unit.id == target_id and not friendly and display.hp > 0:
+		var pulse = 0.65 + sin(elapsed * 4) * 0.2
+		draw_arc(pos, 32, 0, TAU, 40, Color(GOLD, pulse), 2, true)
+		for direction in [-1, 1]:
+			draw_line(pos + Vector2(direction * 39, -5), pos + Vector2(direction * 31, 0), GOLD, 2, true)
 	if unit.id == active_id and display.hp > 0:
 		draw_arc(pos + Vector2(0, 22), 27, 0, TAU, 36, GOLD, 2, true)
 		_text("행동" if not action.is_empty() else "선택", pos + Vector2(0, -33), 11, GOLD)
@@ -140,7 +151,7 @@ func _draw_unit(unit: Dictionary, friendly: bool) -> void:
 	if hit and progress > 0.43 and progress < 0.57: tint = Color(4, 1.1, 1, alpha)
 	_tile(unit.tile, Rect2(pos - Vector2(sprite_size / 2, sprite_size / 2), Vector2.ONE * sprite_size), tint)
 	if not in_battle:
-		_text(unit.name, pos + Vector2(0, 39), 14, Color("ddd9d0"))
+		_text(unit.name, pos + Vector2(0, sprite_size / 2 + 16), 14, Color("ddd9d0"))
 		return
 	var bar_width = minf(94, size.x * 0.27)
 	var bar_pos = pos + Vector2(-bar_width / 2, 38)
@@ -154,7 +165,7 @@ func _draw_unit(unit: Dictionary, friendly: bool) -> void:
 	if friendly:
 		draw_rect(Rect2(bar_pos + Vector2(0, 19), Vector2(bar_width, 3)), Color("111923"))
 		draw_rect(Rect2(bar_pos + Vector2(0, 19), Vector2(bar_width * float(display.mp) / maxf(1, display.max_mp), 3)), BLUE)
-		_text("MP %d · Lv.%d" % [display.mp, display.level], pos + Vector2(0, 75), 12, BLUE)
+		_text("MP %d · Lv.%d" % [display.mp, display.level], pos + Vector2(0, 70), 12, BLUE)
 	else:
 		_text(display.intent if display.hp > 0 else "쓰러짐", pos + Vector2(0, -34), 12, RED)
 	if display.shield > 0:
@@ -183,6 +194,9 @@ func _draw_action() -> void:
 		if progress > 0.40 and progress < 0.88:
 			var impact = (progress - 0.40) / 0.48
 			draw_arc(target, 20 + impact * 24, 0, TAU, 32, Color(color, 1 - impact), 3, true)
+			for spark in range(8):
+				var direction = Vector2.from_angle(spark * TAU / 8 + i)
+				draw_line(target + direction * (12 + impact * 24), target + direction * (18 + impact * 32), Color(color, 1 - impact), 2, true)
 			if effect.kind == "damage":
 				draw_line(target + Vector2(-17, 17) * (1 - impact), target + Vector2(17, -17) * (1 - impact), Color(1, 0.9, 0.75, 1 - impact), 4, true)
 			elif effect.kind == "heal":

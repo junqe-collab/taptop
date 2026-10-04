@@ -16,8 +16,10 @@ func expect(condition: bool, message: String) -> void:
 
 func encounter(seed_value = 42):
 	var game = Battle.new(seed_value)
+	game.relic_id = "coin"
 	expect(not game.enter_battle(), "Must choose route before battle")
 	game.explore()
+	game.routes[0].field = "quiet"
 	game.choose_route(0)
 	Policy.event(game)
 	game.enter_battle()

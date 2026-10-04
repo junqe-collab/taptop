@@ -46,6 +46,10 @@ var selected_caster = ""
 var resolving = false
 var last_actor = ""
 var last_action: Dictionary = {}
+var relic_offers: Array = []
+var relic_id = ""
+var target_id = ""
+var redraw_used = false
 
 
 func _init(seed_value: int = -1):
@@ -83,6 +87,8 @@ func reset(seed_value: int = -1) -> void:
 	enemies.clear()
 	_clear_combat()
 	_make_party()
+	relic_offers = _sample(Data.RELICS.keys(), 3)
+	relic_id = relic_offers[0]
 
 
 func _unit(id: String, display_name: String, tile: int, stats: Array) -> Dictionary:
@@ -163,6 +169,64 @@ func _sample(items: Array, count: int) -> Array:
 	return copy.slice(0, count)
 
 
+func choose_relic(id: String) -> bool:
+	if phase != "camp" or not relic_offers.has(id): return false
+	relic_id = id
+	return true
+
+
+func relic_bonus(effect: String) -> int:
+	if relic_id.is_empty(): return 0
+	var relic = Data.RELICS[relic_id]
+	return relic.amount if relic.effect == effect else 0
+
+
+func battlefield() -> Dictionary:
+	return Data.BATTLEFIELDS[route.get("field", "quiet")]
+
+
+func field_bonus(effect: String) -> int:
+	var field = battlefield()
+	return field.amount if field.effect == effect else 0
+
+
+func skill_cost(id: String) -> int:
+	return maxi(1, SKILLS[id].cost - field_bonus("cost"))
+
+
+func attack_bonus(magical: bool, friendly: bool) -> int:
+	var effect = "magic" if magical else "physical"
+	return field_bonus(effect) + (relic_bonus(effect) if friendly else 0)
+
+
+func choose_target(id: String) -> bool:
+	var target = find_unit(id)
+	if phase != "combat" or resolving or cursor > 0 or not enemies.has(target) or target.hp <= 0: return false
+	target_id = id
+	return true
+
+
+func attack_target() -> Dictionary:
+	var target = find_unit(target_id)
+	if not target.is_empty() and enemies.has(target) and target.hp > 0: return target
+	return living(enemies)[0]
+
+
+func can_redraw() -> bool:
+	return phase == "combat" and not resolving and cursor == 0 and not redraw_used and (draw_pile + discard_pile).any(func(card): return find_unit(card.caster).hp > 0)
+
+
+func redraw_hand() -> bool:
+	if not can_redraw(): return false
+	redraw_used = true
+	# Draw from the remaining deck first, then recycle the old hand if needed.
+	_draw_hand()
+	selected_caster = ""
+	selected_skill = ""
+	_note("손패 교체 · 이번 전투의 교체 기회 사용")
+	return true
+
+
 func explore() -> bool:
 	if phase != "camp" or party.size() != 3:
 		return false
@@ -179,11 +243,12 @@ func _open_routes() -> void:
 		kinds = ["cache", "supply"]
 	elif room == 2:
 		kinds = ["shop", _sample(["shrine", "spring", "cache"], 1)[0]]
+	var fields = _sample(Data.BATTLEFIELDS.keys(), 2)
 	for i in range(2):
-		var foe_ids = _sample(["sentinel", "ember", "raider", "golem", "wisp"], 2)
+		var foe_ids = _sample(Data.ENCOUNTER_FOES, 2)
 		if floor_number == 3 and room == 2:
 			foe_ids[0] = "warden"
-		routes.append({"kind": kinds[i], "risk": i, "foes": foe_ids, "roll": world_rng.randi_range(-2, 2)})
+		routes.append({"kind": kinds[i], "risk": i, "foes": foe_ids, "roll": world_rng.randi_range(-2, 2), "field": fields[i]})
 
 
 func choose_route(index: int) -> bool:
@@ -287,6 +352,8 @@ func forget_skill(hero_id: String, skill_id: String) -> bool:
 
 
 func _clear_combat() -> void:
+	target_id = ""
+	redraw_used = false
 	last_action.clear()
 	order.clear()
 	hand.clear()
@@ -322,10 +389,12 @@ func enter_battle() -> bool:
 		enemies.append(foe)
 	for hero in party:
 		hero.shield = 0
+		if hero.hp > 0: hero.mp = mini(hero.max_mp, hero.mp + relic_bonus("mana"))
 		for key in hero.skills:
 			draw_pile.append({"caster": hero.id, "skill": key})
 	shuffle_with(draw_pile, rng)
-	_note("%d층 %d구역 · 전투 시작" % [floor_number, room])
+	target_id = enemies[0].id
+	_note("%d층 %d구역 · %s · 유물: %s" % [floor_number, room, battlefield().name, Data.RELICS[relic_id].name])
 	next_round()
 	return true
 
@@ -376,13 +445,9 @@ func next_round() -> bool:
 		return a.id < b.id)
 	for enemy in living(enemies):
 		var strong = rng.randf() < 0.35
-		match enemy.kind:
-			"front": enemy.move = "heavy" if strong else "front"
-			"weak": enemy.move = "weak"
-			"mage": enemy.move = "wave" if strong else "magic"
-			_: enemy.move = "wave" if enemy.hp * 2 < enemy.max_hp or strong else "heavy"
-		enemy.intent = {"heavy": "강타 · 전열", "front": "베기 · 전열", "weak": "기습 · 약한 아군",
-			"magic": "불씨 · 약한 아군", "wave": "마법 파동 · 아군 전체"}[enemy.move]
+		if enemy.kind == "boss" and enemy.hp * 2 < enemy.max_hp: strong = true
+		enemy.move = Data.ENEMY_PATTERNS[enemy.kind][1 if strong else 0]
+		enemy.intent = Data.ENEMY_MOVES[enemy.move].intent
 	_draw_hand()
 	_note("%d라운드 · 순서와 손패 확정" % round_number)
 	return true
@@ -392,7 +457,7 @@ func choose_card(caster_id: String, skill_id: String) -> bool:
 	if phase != "combat" or resolving or cursor > 0 or not hand.has({"caster": caster_id, "skill": skill_id}):
 		return false
 	var caster = find_unit(caster_id)
-	if caster.is_empty() or caster.hp <= 0 or caster.mp < SKILLS[skill_id].cost:
+	if caster.is_empty() or caster.hp <= 0 or caster.mp < skill_cost(skill_id):
 		return false
 	selected_caster = caster_id
 	selected_skill = skill_id
@@ -431,11 +496,16 @@ func step_action() -> String:
 			if actor.id == selected_caster and not selected_skill.is_empty():
 				line = _cast(actor, selected_skill)
 			else:
-				line = _strike(actor, living(enemies)[0], actor.patk, "pdef", "기본 공격")
+				line = _strike(actor, attack_target(), actor.patk, "pdef", "기본 공격")
 		else:
 			line = _enemy_action(actor)
 	_note(line)
 	last_action.text = line
+	var effect_kind = "physical"
+	if last_action.kind.contains("shield"): effect_kind = "shield"
+	elif last_action.kind.contains("heal"): effect_kind = "heal"
+	elif last_action.kind in ["magic", "magic_all", "drain"]: effect_kind = "magic"
+	last_action.relic = Data.RELICS[relic_id].name if party.has(actor) and not last_action.cancelled and relic_bonus(effect_kind) > 0 else ""
 	if living(enemies).is_empty():
 		_victory()
 	elif living(party).is_empty():
@@ -444,14 +514,15 @@ func step_action() -> String:
 		_note("파티 전멸 · 원정 종료")
 	elif cursor >= order.size():
 		resolving = false
+	if not living(enemies).is_empty(): target_id = attack_target().id
 	return line
 
 
 func _cast(caster: Dictionary, skill_id: String) -> String:
 	var skill = SKILLS[skill_id]
-	if caster.mp < skill.cost:
-		return _strike(caster, living(enemies)[0], caster.patk, "pdef", "마력 부족 · 기본 공격")
-	caster.mp -= skill.cost
+	if caster.mp < skill_cost(skill_id):
+		return _strike(caster, attack_target(), caster.patk, "pdef", "마력 부족 · 기본 공격")
+	caster.mp -= skill_cost(skill_id)
 	last_action.name = skill.name
 	last_action.kind = skill.kind
 	var details: Array[String] = []
@@ -462,25 +533,26 @@ func _cast(caster: Dictionary, skill_id: String) -> String:
 			if skill.kind == "magic_shield": targets = [living(party)[0]]
 			for target in targets:
 				var amount = int(skill.power * caster.matk) if skill.kind == "magic_shield" else int(skill.power)
+				amount += relic_bonus("shield")
 				target.shield += amount
 				_effect(target, "shield", amount)
 				details.append("%s 방어막 +%d" % [target.name, amount])
 		"heal", "party_heal":
 			var targets = living(party) if skill.kind == "party_heal" else [weakest(party)]
 			for target in targets:
-				var amount = mini(roundi(caster.matk * skill.power), target.max_hp - target.hp)
+				var amount = mini(roundi(caster.matk * skill.power) + relic_bonus("heal") + field_bonus("heal"), target.max_hp - target.hp)
 				target.hp += amount
 				_effect(target, "heal", amount)
 				details.append("%s 체력 +%d" % [target.name, amount])
 		_:
 			var magical = skill.kind in ["magic", "magic_all", "drain"]
 			var power = roundi(caster.matk * skill.power) if magical else roundi(caster.patk * skill.power)
-			var targets = living(enemies) if skill.kind in ["physical_all", "magic_all"] else [living(enemies)[0]]
+			var targets = living(enemies) if skill.kind in ["physical_all", "magic_all"] else [attack_target()]
 			for target in targets:
 				var defense = target.mdef if magical else target.pdef
 				if skill.kind == "pierce": defense = 0
 				var before_hp = target.hp
-				details.append(_hurt(target, maxi(1, power - defense)))
+				details.append(_hurt(target, maxi(1, power - defense + attack_bonus(magical, true))))
 				if skill.kind == "drain":
 					var amount = mini(caster.max_hp - caster.hp, int((before_hp - target.hp) / 2))
 					caster.hp += amount
@@ -496,23 +568,25 @@ func weakest(units: Array) -> Dictionary:
 
 
 func _enemy_action(enemy: Dictionary) -> String:
-	last_action.name = enemy.intent.split(" · ")[0]
-	last_action.kind = "magic" if enemy.move in ["wave", "magic"] else "physical"
-	match enemy.move:
-		"wave":
-			var details: Array[String] = []
-			for target in living(party):
-				details.append(_hurt(target, maxi(1, enemy.matk - 3 - target.mdef)))
-			return "%s · 마법 파동 → %s" % [enemy.name, ", ".join(details)]
-		"magic": return _strike(enemy, weakest(party), enemy.matk, "mdef", "불씨")
-		"weak": return _strike(enemy, weakest(party), enemy.patk, "pdef", "기습")
-		_: return _strike(enemy, living(party)[0], enemy.patk + (3 if enemy.move == "heavy" else 0), "pdef", "강타" if enemy.move == "heavy" else "베기")
+	var move = Data.ENEMY_MOVES[enemy.move]
+	last_action.name = move.name
+	last_action.kind = move.kind
+	var magical = move.kind == "magic"
+	var defense = "mdef" if magical else "pdef"
+	var power = (enemy.matk if magical else enemy.patk) + move.power
+	if move.target == "all":
+		var details: Array[String] = []
+		for target in living(party):
+			details.append(_hurt(target, maxi(1, power - target[defense] + attack_bonus(magical, false))))
+		return "%s · %s → %s" % [enemy.name, move.name, ", ".join(details)]
+	var target = weakest(party) if move.target == "weak" else living(party)[0]
+	return _strike(enemy, target, power, defense, move.name)
 
 
 func _strike(actor: Dictionary, target: Dictionary, power: int, defense: String, action: String) -> String:
 	last_action.name = action
 	last_action.kind = "magic" if defense == "mdef" else "physical"
-	return "%s · %s → %s" % [actor.name, action, _hurt(target, maxi(1, power - target[defense]))]
+	return "%s · %s → %s" % [actor.name, action, _hurt(target, maxi(1, power - target[defense] + attack_bonus(defense == "mdef", party.has(actor))))]
 
 
 func _hurt(target: Dictionary, damage: int) -> String:
@@ -538,7 +612,7 @@ func _victory() -> void:
 	phase = "reward"
 	resolving = false
 	wins += 1
-	var earned = 25 + floor_number * 5 + route.risk * 12
+	var earned = 25 + floor_number * 5 + route.risk * 12 + relic_bonus("gold")
 	gold += earned
 	for hero in party:
 		hero.shield = 0

@@ -56,3 +56,32 @@ const REST_EVENTS = [
 	{"name": "동료의 격려", "description": "긴장하던 몸에 다시 힘이 돌아옵니다. 최대 체력만 증가합니다.", "bonus": {"max_hp": 4}},
 	{"name": "고요한 밤", "description": "차분해진 마음으로 마력을 더 담아냅니다.", "bonus": {"max_mp": 2}}
 ]
+
+# Content definitions only. Effects are interpreted by battle.gd; colors by the views.
+const RELICS = {
+	"fang": {"name": "붉은 송곳니", "description": "아군 물리 피해 +2", "effect": "physical", "amount": 2, "color": "efa686", "art": "physical"},
+	"moon": {"name": "달의 파편", "description": "아군 마법 피해 +2", "effect": "magic", "amount": 2, "color": "c5a1f1", "art": "magic"},
+	"oath": {"name": "수호자의 인장", "description": "스킬로 얻는 방어막 +4", "effect": "shield", "amount": 4, "color": "88bfff", "art": "shield"},
+	"bloom": {"name": "새벽 꽃잎", "description": "스킬 치유량 +4", "effect": "heal", "amount": 4, "color": "86cdbc", "art": "heal"},
+	"vial": {"name": "별빛 물병", "description": "전투 진입 시 생존 아군 마력 +2", "effect": "mana", "amount": 2, "color": "88bfff", "art": "magic"},
+	"coin": {"name": "행운의 동전", "description": "승리 보상 골드 +10", "effect": "gold", "amount": 10, "color": "e5bc70", "art": "physical"}
+}
+const BATTLEFIELDS = {
+	"quiet": {"name": "고요한 폐허", "description": "전장 추가 효과 없음", "effect": "none", "amount": 0, "color": "9caab9"},
+	"embers": {"name": "불꽃의 균열", "description": "양측 물리 피해 +2", "effect": "physical", "amount": 2, "color": "efa686"},
+	"arcane": {"name": "비전 폭풍", "description": "양측 마법 피해 +2", "effect": "magic", "amount": 2, "color": "c5a1f1"},
+	"spring": {"name": "마력의 안개", "description": "스킬 비용 -1 (최소 1)", "effect": "cost", "amount": 1, "color": "88bfff"},
+	"bloom": {"name": "생명의 정원", "description": "스킬 치유량 +3", "effect": "heal", "amount": 3, "color": "86cdbc"}
+}
+const ENCOUNTER_FOES = ["sentinel", "ember", "raider", "golem", "wisp"]
+const ENEMY_MOVES = {
+	"front": {"name": "베기", "intent": "베기 · 전열", "kind": "physical", "target": "front", "power": 0},
+	"heavy": {"name": "강타", "intent": "강타 · 전열", "kind": "physical", "target": "front", "power": 3},
+	"weak": {"name": "기습", "intent": "기습 · 약한 아군", "kind": "physical", "target": "weak", "power": 0},
+	"magic": {"name": "불씨", "intent": "불씨 · 약한 아군", "kind": "magic", "target": "weak", "power": 0},
+	"wave": {"name": "마법 파동", "intent": "마법 파동 · 아군 전체", "kind": "magic", "target": "all", "power": -3}
+}
+const ENEMY_PATTERNS = {
+	"front": ["front", "heavy"], "weak": ["weak", "weak"],
+	"mage": ["magic", "wave"], "boss": ["heavy", "wave"]
+}
